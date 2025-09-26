@@ -11,7 +11,7 @@ def prepro(env_name, train_s):
         targetdata = data
 
     elif env_name in ["exchange"]:
-        HLlist = ["USD_CNY", "USD_EUR", "USD_JPY", "USD_TRY"]
+        HLlist = ["USD_CNY", "USD_EUR", "USD_JPY"]
         data_all = pd.read_csv("../data/exchange.csv")
         name = [x + "_close" for x in HLlist]
         # print(name)
