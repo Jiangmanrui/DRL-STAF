@@ -75,24 +75,17 @@ class ResidualGAT(nn.Module):
             nheads: int,
             merge: str = "concat"
     ):
-        """
-        in_feats: 输入特征维度 F
-        dropout : dropout 比例
-        alpha   : LeakyReLU 斜率
-        nheads  : 注意力头数
-        merge   : 'concat' 或 'average'
-        """
+
         super().__init__()
         self.in_feats = in_feats
         self.nheads = nheads
         self.merge = merge
 
-        # 原始 GAT 层
+        # Traditional GAT layer
         self.gat = GAT(in_feats, dropout, alpha, nheads, merge)
 
-        # 如果 concat，则 GAT 输出维度为 nheads*in_feats，否则为 in_feats
+
         out_feats = in_feats * nheads if merge == "concat" else in_feats
-        # 投影回原始 in_feats，以便做残差相加
         self.project = nn.Linear(out_feats, in_feats)
 
     def forward(self, x, adj):
@@ -100,23 +93,22 @@ class ResidualGAT(nn.Module):
         x:   [B, T, N, in_feats]
         adj: [N, N]
         """
-        # 1) GAT 多头注意力输出
+        # 1) GAT multi-heads
         h = self.gat(x, adj)  # [B, T, N, out_feats]
 
-        # 2) 投影回 in_feats
+        # 2) Back to the original feature dimension
         h = self.project(h)  # [B, T, N, in_feats]
 
-        # 3) 残差连接 + 激活
+        # 3) Residual connection
         return F.elu(h + x)  # [B, T, N, in_feats]
 
 
 class PolicyNet(torch.nn.Module):
     def __init__(self, state_dim, hidden_dim, history_dim, action_dim, net, device):
         super(PolicyNet, self).__init__()
-        # print(state_dim, hidden_dim, action_dim)
+
         s1_dim = state_dim["S1"]
         self.num_nodes = s1_dim[0]
-        # self.dense1 = nn.Linear(s1_dim[-1] * s1_dim[-2], hidden_dim, bias=False)
         self.dense2 = nn.Linear(hidden_dim * 2, hidden_dim, bias=False)
         self.dense3 = nn.Linear(history_dim * action_dim, hidden_dim, bias=False)
         self.dense4 = nn.Linear(history_dim * action_dim, hidden_dim, bias=False)
@@ -129,7 +121,6 @@ class PolicyNet(torch.nn.Module):
 
     def forward(self, input):
         x, belief, error, fresult = input["S1"], input["S3"], input["S4"], input["S5"]
-        # print(fresult.shape)
         fresult = fresult.squeeze(2)
         belief = belief.reshape(belief.shape[0], belief.shape[1], -1)
         error = error.reshape(error.shape[0], error.shape[1], -1)
@@ -143,7 +134,6 @@ class PolicyNet(torch.nn.Module):
         logits += torch.randn_like(logits) * 1e-3
 
         trust = torch.sigmoid(self.alpha_node).view(1, -1, 1)  # [1,N,1]
-        # print(trust)
         f_adj = fresult * trust
 
         logits = logits + f_adj
@@ -192,8 +182,6 @@ class ValueNet(torch.nn.Module):
 
 
 class PPO:
-    ''' PPO算法,采用截断方式 '''
-
     def __init__(self, state_dim, hidden_dim, history_dim, action_dim, actor_lr, critic_lr,
                  lmbda, epochs, eps, gamma, net, device):
         self.actor = PolicyNet(state_dim, hidden_dim, history_dim, action_dim, net, device).to(device)
@@ -204,8 +192,8 @@ class PPO:
                                                  lr=critic_lr)
         self.gamma = gamma
         self.lmbda = lmbda
-        self.epochs = epochs  # 一条序列的数据用来训练轮数
-        self.eps = eps  # PPO中截断范围的参数
+        self.epochs = epochs
+        self.eps = eps
         self.device = device
         self.entropy_coef = entropy_coef
 
@@ -258,7 +246,6 @@ class PPO:
         if dones.ndim == 1:
             dones = dones.unsqueeze(1).expand_as(rewards)
 
-        # === 1. 计算 td_target 和 advantage：全部用 detach() ===
         with torch.no_grad():
             value_detached = self.critic(states)  # [B, N]
             next_value_detached = self.critic(next_states)  # [B, N]
@@ -266,14 +253,13 @@ class PPO:
             td_delta = td_target - value_detached  # [B, N]
             advantage = compute_advantage(self.gamma, self.lmbda, td_delta.cpu()).to(self.device)
 
-            # 获取旧策略 log_prob（detach，避免残留图）
             probs_list = self.actor(states)
             old_log_probs = torch.stack([
                 torch.log(probs_list[i].gather(1, actions[:, i].unsqueeze(1)).clamp(min=1e-8)).squeeze(1)
                 for i in range(len(probs_list))
             ], dim=1)  # [B, N]
 
-        # === 2. 多轮 PPO 训练 ===
+        # === 2. Multiple rounds of PPO training ===
         for _ in range(self.epochs):
             probs_list = self.actor(states)
             value = self.critic(states)  # [B, N]

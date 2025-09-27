@@ -1,8 +1,6 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
-from utils import compute_advantage
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
 class PNet(torch.nn.Module):
@@ -69,14 +67,14 @@ class PREDM:
         self.pred = PNet(input_dim, hidden_dim, pred_dim, num_states).to(device)
         self.predbase = PNetbase(input_dim, hidden_dim, pred_dim, num_states).to(device)
         self.target_pred = PNet(input_dim, hidden_dim, pred_dim, num_states).to(device)
-        self.target_pred.load_state_dict(self.pred.state_dict())  # 初始化为当前 pred 的参数
-        self.tau = tau  # 软更新系数，可调
+        self.target_pred.load_state_dict(self.pred.state_dict())
+        self.tau = tau
         self.param = param
         self.optimizer = torch.optim.Adam(self.pred.parameters(),
                                           lr=lr)
         self.optimizerbase = torch.optim.Adam(self.predbase.parameters(),
                                               lr=lr)
-        self.epochs = epochs  # 一条序列的数据用来训练轮数
+        self.epochs = epochs
         self.patience = pat
         self.device = device
         self.criterion = nn.MSELoss()
@@ -93,10 +91,9 @@ class PREDM:
         dataset = TensorDataset(inputdata["S1"], outputdata)
         train_loader = DataLoader(dataset, batch_size=64, shuffle=False)
 
-        # 提前停止相关设置
         best_loss = float('inf')
         best_state_dict = None
-        patience = self.patience  # 提前停止容忍轮数，建议在 __init__ 中定义 self.pat
+        patience = self.patience
         counter = 0
 
         for epoch in range(self.epochs):
@@ -112,7 +109,7 @@ class PREDM:
 
             avg_loss = running_loss / len(train_loader)
 
-            if avg_loss < best_loss - 1e-5:  # 加一个很小的阈值避免浮点误差
+            if avg_loss < best_loss - 1e-5:
                 best_loss = avg_loss
                 best_state_dict = {k: v.clone() for k, v in self.predbase.state_dict().items()}
                 counter = 0
@@ -122,7 +119,6 @@ class PREDM:
                     print(f"Early stopping at epoch {epoch + 1}, best loss: {best_loss:.6f}")
                     break
 
-        # 恢复最佳模型参数
         if best_state_dict is not None:
             self.predbase.load_state_dict(best_state_dict)
 
@@ -138,10 +134,9 @@ class PREDM:
         dataset = TensorDataset(inputdata["S1"], choices, outputdata)
         train_loader = DataLoader(dataset, batch_size=64, shuffle=False)
 
-        # 提前停止相关设置
         best_loss = float('inf')
         best_state_dict = None
-        patience = self.patience  # 提前停止容忍轮数，建议在 __init__ 中定义 self.pat
+        patience = self.patience
         counter = 0
 
         for epoch in range(self.epochs):
@@ -157,7 +152,7 @@ class PREDM:
 
             avg_loss = running_loss / len(train_loader)
 
-            if avg_loss < best_loss - 1e-5:  # 加一个很小的阈值避免浮点误差
+            if avg_loss < best_loss - 1e-5:
                 best_loss = avg_loss
                 best_state_dict = {k: v.clone() for k, v in self.pred.state_dict().items()}
                 counter = 0
@@ -167,7 +162,6 @@ class PREDM:
                     print(f"Early stopping at epoch {epoch + 1}, best loss: {best_loss:.6f}")
                     break
 
-        # 恢复最佳模型参数
         if best_state_dict is not None:
             self.pred.load_state_dict(best_state_dict)
 
@@ -184,20 +178,19 @@ class PREDM:
             all_selected_indices1 = []
             all_selected_indices2 = []
             cls_mask = choices[:, cls] == 1
-            cls_indices = torch.nonzero(cls_mask, as_tuple=False).view(-1)  # [M]，第cls类的样本索引
+            cls_indices = torch.nonzero(cls_mask, as_tuple=False).view(-1)
             if cls_indices.numel() == 0:
                 buchong_train.append(cls)
-                continue  # 当前类无样本，跳过
+                continue
             else:
                 cls_chazhi = chazhihz[cls_indices]
                 positive_mask = cls_chazhi > 0
                 positive_indices_local = torch.nonzero(positive_mask, as_tuple=False).view(-1)
 
             if positive_indices_local.numel() == 0:
-                half_num = max(1, cls_indices.numel() // 2)  # 至少保留1个
+                half_num = max(1, cls_indices.numel() // 2)
                 _, sorted_indices_local = torch.topk(cls_chazhi, k=half_num)
-                # print("sorted_indices_local", sorted_indices_local)
-                # print()
+
                 positive_indices = cls_indices[sorted_indices_local]
             else:
                 positive_indices = cls_indices[positive_indices_local]
@@ -219,7 +212,6 @@ class PREDM:
 
                     current_group = [curr_idx]
 
-            # 处理最后一段
             if len(current_group) >= min_seq_len1:
                 all_selected_indices1.append(torch.tensor(current_group, device=choices.device))
             elif len(current_group) >= min_seq_len2:
@@ -230,9 +222,7 @@ class PREDM:
             else:
                 if len(all_selected_indices2) > 0:
                     all_selected_indices.append(torch.cat(all_selected_indices2, dim=0))
-                # else:
-                #     buchong_train.append(cls)
-        # 合并所有类的索引
+
         final_selected_indices = torch.cat(all_selected_indices, dim=0) if all_selected_indices else torch.tensor([],
                                                                                                                   dtype=torch.long,
                                                                                                                   device=choices.device)
@@ -255,11 +245,9 @@ class PREDM:
             dataset = TensorDataset(inputdata["S1"][selectindex], choices[selectindex],
                                     outputdata[selectindex])
             train_loader = DataLoader(dataset, batch_size=64, shuffle=False)
-
-            # 提前停止相关设置
             best_loss = float('inf')
             best_state_dict = None
-            patience = self.patience  # 提前停止容忍轮数，建议在 __init__ 中定义 self.pat
+            patience = self.patience
             counter = 0
 
             for epoch in range(self.epochs):
@@ -275,7 +263,7 @@ class PREDM:
 
                 avg_loss = running_loss / len(train_loader)
 
-                if avg_loss < best_loss - 1e-5:  # 加一个很小的阈值避免浮点误差
+                if avg_loss < best_loss - 1e-5:
                     best_loss = avg_loss
                     best_state_dict = {k: v.clone() for k, v in self.pred.state_dict().items()}
                     counter = 0
@@ -284,8 +272,6 @@ class PREDM:
                     if counter >= patience:
                         print(f"Early stopping at epoch {epoch + 1}, best loss: {best_loss:.6f}")
                         break
-
-            # 恢复最佳模型参数
             if best_state_dict is not None:
                 self.pred.load_state_dict(best_state_dict)
 

@@ -7,19 +7,11 @@ import math
 
 def inverse_softmax(x, T=1.0):
     x = -x / T
-    e_x = np.exp(x - np.max(x, axis=0, keepdims=True))  # 按列做 softmax
-    return e_x / np.sum(e_x, axis=0, keepdims=True)  # 按列归一化
+    e_x = np.exp(x - np.max(x, axis=0, keepdims=True))
+    return e_x / np.sum(e_x, axis=0, keepdims=True)
 
 
-# 离散动作空间
 class Env(gym.Env):
-    """
-    自定义环境：时间序列预测
-    状态空间：包含两个部分
-        S1: 历史x天的时间序列（连续空间）
-        S2: 预测结果和真实结果（连续空间）
-    动作空间：智能体的预测结果（下一个时间步的预测值）
-    """
 
     def __init__(self, time_series, target_time_series, window_size, train_size, val_size, hidden_dim, history_dim,
                  num_states, num_nodes, feature_num,
@@ -28,14 +20,14 @@ class Env(gym.Env):
 
         self.time_series = time_series
         self.target_time_series = target_time_series
-        self.max_steps = len(time_series)  # 最大步数等于时间序列的长度
+        self.max_steps = len(time_series)
         self.max_timesteps = max_timesteps
         self.window_size = window_size
         self.train_size = int(self.max_steps * train_size)
         self.val_size = self.train_size
-        # self.val_size2 = int(self.max_steps * val_size / 2)
-        # self.test_size = self.max_steps - self.train_size - self.val_size2
-        self.test_size = self.max_steps - 1000
+
+        self.qs = 200
+        self.test_size = self.max_steps - self.qs
         self.hidden_dim = hidden_dim
         self.history_dim = history_dim
         self.num_states = num_states
@@ -61,11 +53,6 @@ class Env(gym.Env):
 
         self.action_space = spaces.Discrete(self.num_states)
 
-        # 定义状态空间
-        # S1: 当前及历史观测
-        # S2: 当前隐状态
-        # S3: 上一时刻置信
-        # S4: 上一时刻error
         self.observation_space = spaces.Dict({
             'S1': spaces.Box(low=-1, high=1, shape=(self.num_nodes, window_size[0], self.feature_num),
                              dtype=np.float32),
@@ -77,7 +64,7 @@ class Env(gym.Env):
                              dtype=np.float32),
         })
 
-        self.current_step = window_size  # 初始化当前步（确保有足够的历史数据生成状态）
+        self.current_step = window_size
 
     def reset(self, type):
         self.last_action = np.ones(self.num_nodes) * -9999
@@ -94,7 +81,7 @@ class Env(gym.Env):
             self.current_step = np.max(self.window_size) + 1
             self.max_steps = self.train_size
         else:
-            self.current_step = 1000
+            self.current_step = self.qs
             self.max_steps = len(self.time_series)
 
     def step(self, sort_p):

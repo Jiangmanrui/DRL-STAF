@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 
+# ===== Default hyperparameters / settings =====
 future_weight = 0.5
 score1bs = 4
 score2bs = 2
@@ -57,7 +58,6 @@ filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}".format(max_timesteps,
                                                                  param,
                                                                  tau,
                                                                  env_name)
-# filename2 = "env_{}_{}".format(hidden_dim, env_name)
 print("filename", filename)
 
 
@@ -108,10 +108,10 @@ def train():
     env.qs = start
 
     state_dim = {
-        'S1': env.observation_space['S1'].shape,  # 获取S1的维度
-        'S11': env.observation_space['S11'].shape,  # 获取S1的维度
-        'S3': env.observation_space['S3'].shape,  # 获取S1的维度
-        'S4': env.observation_space['S4'].shape,  # 获取S1的维度
+        'S1': env.observation_space['S1'].shape,
+        'S11': env.observation_space['S11'].shape,
+        'S3': env.observation_space['S3'].shape,
+        'S4': env.observation_space['S4'].shape,
     }
     action_dim = num_states
     policy = PPO(state_dim, hidden_dim, history_dim, action_dim, actor_lr, critic_lr, lmbda,
@@ -141,6 +141,7 @@ def train():
                            'rewards': [], 'dones': [],
                            'pred_state_S1': [], 'pred_state_S2': [], 'pred_target': [],
                            'pred_choice': []}
+        # reset environment and train
         state = env.reset(0, prednet)
         t = 0
         ep_reward = 0
@@ -189,6 +190,8 @@ def train():
             change_countshz.pop(0)
         log_f.flush()
         if episode % log_interval == 0:
+
+            # reset environment and validate
             state = env.reset(1, prednet)
 
             t2 = 0
@@ -288,6 +291,7 @@ def train():
             prednet.save(directory, filename + "_" + str(episode))
 
             results = pd.DataFrame(columns=["state", "label", "pred", "predbase", "target", "mae", "mse"])
+            # reset environment and test
             state = env.reset(2, prednet)
             t3 = 0
             test_ep_reward = 0

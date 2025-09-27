@@ -34,15 +34,19 @@ param = [8, 2]
 tau = 0.01
 num_states = 2
 nn = 0
+start = 1000
 max_timesteps = 2000
 # env_name = 'sim_chosmm_5000_g2_2_0.2'
 env_name = 'sim_chosmm_10_10000_g2_2_0.2'
 # env_name = 'sim_chosmm_50_10000_g2_2_0.2'
 
+# If have an adjacency matrix
 # net = np.array([[0, 1, 0],
 #                 [1, 0, 1],
 #                 [0, 1, 0]])
 # net = np.load("G:/mypro/predict_and_states/data/sim_chosmm_W_10.npy")
+
+# If no adjacency matrix
 net = np.ones((10, 10)) - np.eye(10)
 directory = "./preTrained/{}".format(env_name)  # save trained models
 directory2 = "./results/{}".format(env_name)  # save trained models
@@ -102,6 +106,7 @@ def train():
     policy_base = {}
     prednet = {}
     state_dim_base = {}
+    # Load stage one as base policy and predicition network
     for nn in range(num_nodes):
         filename_base[nn] = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}".format(2000,
                                                                                   nn,
@@ -134,12 +139,13 @@ def train():
         env_base[nn].con_theta = con_theta
         env_base[nn].score1bs = score1bs
         env_base[nn].score2bs = score2bs
+        env_base[nn].qs = start
 
         state_dim_base[nn] = {
-            'S1': env_base[nn].observation_space['S1'].shape,  # 获取S1的维度
-            'S11': env_base[nn].observation_space['S11'].shape,  # 获取S1的维度
-            'S3': env_base[nn].observation_space['S3'].shape,  # 获取S1的维度
-            'S4': env_base[nn].observation_space['S4'].shape,  # 获取S1的维度
+            'S1': env_base[nn].observation_space['S1'].shape,
+            'S11': env_base[nn].observation_space['S11'].shape,
+            'S3': env_base[nn].observation_space['S3'].shape,
+            'S4': env_base[nn].observation_space['S4'].shape,
         }
 
         policy_base[nn] = PPO_1(state_dim_base[nn], hidden_dim, history_dim, num_states, actor_lr, critic_lr, lmbda,
@@ -167,11 +173,12 @@ def train():
     env.con_theta = con_theta
     env.score1bs = score1bs
     env.score2bs = score2bs
+    env.qs = start
 
     env_real = copy.deepcopy(env_base)
 
     state_dim = {
-        'S1': env.observation_space['S1'].shape,  # 获取S1的维度
+        'S1': env.observation_space['S1'].shape,
         'S3': env.observation_space['S3'].shape,
         'S4': env.observation_space['S4'].shape,
         'S5': env.observation_space['S5'].shape,
@@ -200,9 +207,11 @@ def train():
                            'nstate_S5': [],
                            'rewards': [], 'dones': []}
         transition_dict2 = {}
+        # reset environment and train
         env.reset(0)
         state_base = {}
         state_real = {}
+        # reset stage one and stage two env
         for nn in range(num_nodes):
             env_base[nn].con_theta_episode_count = episode
             env_real[nn].con_theta_episode_count = episode
@@ -224,6 +233,7 @@ def train():
                 nstate_S5 = []
                 sort_p = []
                 reward_base_hz = []
+                # get stage one results and build stage two input
                 for nn in range(num_nodes):
                     probs_base, action_base = policy_base[nn].take_action(state_base[nn], False)
                     state_S2.append(env_base[nn].s3)
@@ -232,10 +242,11 @@ def train():
                         probs_base,
                         action_base,
                         prednet[nn])
-                    # print("probs_base_hz.shape",probs_base_hz.shape)
+
                     state_S1.append(state_real[nn]["S11"])
                     state_S3.append(state_real[nn]["S3"])
                     state_S4.append(state_real[nn]["S4"])
+                    # stage one policy output as stage two input
                     state_S5.append(probs_base)
                     reward_base_hz.append(reward_base)
 
@@ -261,6 +272,7 @@ def train():
                     "S5": state_S5
                 }
 
+                # get stage two policy results
                 probs, action = policy.take_action(state)
                 nstate_S1 = []
                 nstate_S3 = []
@@ -268,7 +280,6 @@ def train():
                 reward_hz = []
                 changecounts = []
                 for nn in range(num_nodes):
-                    # print("probs.shape", probs[nn].shape)
                     next_state, reward, done, pred_train = env_real[nn].step(
                         state_real[nn],
                         probs[nn],
@@ -330,6 +341,7 @@ def train():
                     break
 
         if episode > 1000:
+            # Restart the training of the prediction module
             for nn in range(num_nodes):
                 if train_sig[nn] != 0:
                     prednet[nn].updatebase(transition_dict2[nn])
@@ -351,6 +363,7 @@ def train():
                                                        val_ep_reward_base, val_ep_reward, changecounts))
         log_f.flush()
         if episode % log_interval == 0:
+            # reset environment and validate
             env.reset(1)
             state_base = {}
             state_real = {}
@@ -491,6 +504,8 @@ def train():
                 colnames.append("mae")
                 colnames.append("mse")
                 results = pd.DataFrame(columns=colnames)
+
+                # reset environment and test
                 env.reset(2)
                 state_base = {}
                 state_real = {}
@@ -619,10 +634,10 @@ def train():
                         test_ep_reward) + "_" + str(
                         mae))
                 for n in range(num_nodes):
-                    col = n % max_cols  # 当前节点放在哪一列
-                    row_group = n // max_cols  # 当前节点属于第几组
-                    row_obs = row_group * 2  # 观测在偶数行
-                    row_state = row_group * 2 + 1  # 状态在奇数行
+                    col = n % max_cols
+                    row_group = n // max_cols
+                    row_obs = row_group * 2
+                    row_state = row_group * 2 + 1
 
                     axes[row_obs, col].plot(results[["label" + str(n), "statebase" + str(n), "state" + str(n)]])
                     axes[row_state, col].plot(results[["target" + str(n), "predbase" + str(n), "pred" + str(n)]])
@@ -766,10 +781,8 @@ def train():
                         break
             print(results)
             results.to_csv(directory2 + "/" + filename + "_" + str(episode) + ".csv")
-            # mae = np.average(results.loc[env.val_size - env.val_size2:, "mae"])
             mae = np.average(results["mae"])
             print(mae)
-            # print(results[["pred","target"]])
             max_cols = 5
             num_rows = int(np.ceil(num_nodes / max_cols))
             fig, axes = plt.subplots(num_rows * 2, max_cols, figsize=(4 * max_cols, 6 * num_rows), sharex=True)
@@ -779,10 +792,10 @@ def train():
                     test_ep_reward) + "_" + str(
                     mae))
             for n in range(num_nodes):
-                col = n % max_cols  # 当前节点放在哪一列
-                row_group = n // max_cols  # 当前节点属于第几组
-                row_obs = row_group * 2  # 观测在偶数行
-                row_state = row_group * 2 + 1  # 状态在奇数行
+                col = n % max_cols
+                row_group = n // max_cols
+                row_obs = row_group * 2
+                row_state = row_group * 2 + 1
 
                 axes[row_obs, col].plot(results[["label" + str(n), "statebase" + str(n), "state" + str(n)]])
                 axes[row_state, col].plot(results[["target" + str(n), "predbase" + str(n), "pred" + str(n)]])
