@@ -13,13 +13,13 @@ def logsumexp(a, axis=None):
     out = a_max + np.log(np.sum(np.exp(a - a_max), axis=axis, keepdims=True))
     return np.squeeze(out, axis=axis)
 
-# =============== 单条链：高阶 HMM（GMM 发射） ===============
+# =============== Single chain: High-Order HMM (GMM emissions) ===============
 class SingleHOHMM:
     def __init__(self, K=2, order=2, mix_components=3, max_iter=80, tol=1e-5, seed=0):
         """
-        K: 状态数
-        order: 高阶阶数 r（转移 P(z_t | z_{t-1},...,z_{t-r})）
-        mix_components: 每状态 GMM 分量数
+        K: number of states
+        order: higher-order (r) so that P(z_t | z_{t-1}, ..., z_{t-r})
+        mix_components: number of Gaussian mixture components per state
         """
         self.K = int(K)
         self.R = int(order)
@@ -28,13 +28,14 @@ class SingleHOHMM:
         self.tol = float(tol)
         self.rng = np.random.default_rng(seed)
 
-        # 扩展状态空间（上下文）：c_t = (z_{t-R+1},...,z_t) ∈ {0..K-1}^R
+        # Expanded state space (context): c_t = (z_{t-R+1}, ..., z_t) ∈ {0..K-1}^R
         self.S = self.K ** self.R
         self.idx2ctx = np.array(np.unravel_index(np.arange(self.S), (self.K,) * self.R)).T  # (S, R)
         # ctx -> idx
         self.ctx2idx = {tuple(row.tolist()): i for i, row in enumerate(self.idx2ctx)}
 
-        # 为转移构造 next_ctx 索引：给定扩展状态 u（上下文）和新状态 k，下一扩展状态 v 的索引
+        # For transitions, build next_ctx index: given expanded state u (context) and new state k,
+        # the index of the next expanded state v
         self.next_ctx = np.zeros((self.S, self.K), dtype=int)  # (S, K)
         for u in range(self.S):
             ctx = self.idx2ctx[u]
@@ -42,38 +43,38 @@ class SingleHOHMM:
                 nxt = tuple(list(ctx[1:]) + [k])
                 self.next_ctx[u, k] = self.ctx2idx[nxt]
 
-        # 每个扩展状态的“当前真实状态”（上下文最后一位）
+        # The "current true state" of each expanded state (last element of context)
         self.last_of_ctx = self.idx2ctx[:, -1]  # (S,)
 
-        # 参数：初始分布、扩展转移（由高阶张量 psi 生成）、GMM 发射
+        # Parameters: initial distribution, expanded transition (built from higher-order tensor psi), GMM emissions
         self.pi = None           # (S,)
-        self.psi = None          # 高阶转移张量，shape = (K,)*R + (K,)   parents->dest
-        self.A = None            # 扩展转移矩阵 (S,S)，由 psi 计算得到
+        self.psi = None          # higher-order transition tensor, shape = (K,)*R + (K,)  parents->dest
+        self.A = None            # expanded transition matrix (S,S), computed from psi
         self.mix_w = None        # (K, C)
         self.mix_mu = None       # (K, C)
         self.mix_var = None      # (K, C)
 
-        # 预先为“按真实状态取扩展状态”的掩码
+        # Precompute masks for selecting expanded states by true state (last element)
         self.mask_last = np.zeros((self.K, self.S), dtype=bool)
         for k in range(self.K):
             self.mask_last[k, self.last_of_ctx == k] = True
 
-    # ---------- 发射对数似然（GMM） ----------
+    # ---------- Emission log-likelihood (GMM) ----------
     def _emission_loglik_t(self, y_t):
-        # y_t: scalar (单链)
+        # y_t: scalar (single chain)
         eps = 1e-8
-        # 对每个真实状态 k 计算 GMM 对数似然，然后映射到扩展状态上
+        # Compute GMM log-likelihood per true state k, then map to expanded states
         loglik_k = np.zeros(self.K)
         for k in range(self.K):
             lw = np.log(self.mix_w[k] + eps)         # (C,)
             var = np.maximum(self.mix_var[k], eps)   # (C,)
             lN = -0.5 * (np.log(2*np.pi*var) + (y_t - self.mix_mu[k])**2 / var)  # (C,)
             loglik_k[k] = logsumexp(lw + lN)
-        # 扩展到 (S,)
+        # Broadcast to (S,)
         return loglik_k[self.last_of_ctx]
 
     def _build_A_from_psi(self):
-        """由 psi（parents->dest 的条件分布）构造扩展转移矩阵 A"""
+        """Construct expanded transition matrix A from psi (parents->dest conditional distribution)."""
         S, K = self.S, self.K
         A = np.zeros((S, S))
         for u in range(S):
@@ -81,19 +82,19 @@ class SingleHOHMM:
             for k in range(K):
                 v = self.next_ctx[u, k]
                 A[u, v] = self.psi[parents + (k,)]
-        # 行归一化（数值稳健）
+        # Row normalization (numerically stable)
         A = A / (A.sum(axis=1, keepdims=True) + 1e-12)
         self.A = A
 
-    # ---------- 前向后向（在扩展状态上） ----------
+    # ---------- Forward-backward on expanded states ----------
     def _forward_backward(self, y):
         """
-        y: (T,) 单链观测
-        我们从 t0 = R-1 开始做 E 步（前 R-1 个时刻不参与 EM）
+        y: (T,) single-chain observations
+        We start E-step at t0 = R-1 (the first R-1 time steps are excluded from EM).
         """
         T = len(y)
         if T < self.R:
-            # 不足以形成一个上下文；退化使用单步
+            # Not enough length to form a context; fall back to single step
             t0 = 0
         else:
             t0 = self.R - 1
@@ -135,17 +136,17 @@ class SingleHOHMM:
         eps = 1e-8
         Teff = gamma.shape[0]
 
-        # pi（扩展初始分布）
+        # pi (expanded initial distribution)
         self.pi = gamma[0] / (gamma[0].sum() + 1e-12)
 
-        # 高阶转移 psi（parents->dest）
-        # 统计 counts[parents, k] = sum_t sum_{u in parents} sum_{v with last=k and shift-consistent} xi[t,u,v]
+        # Higher-order transition psi (parents->dest)
+        # counts[parents, k] = sum_t sum_{u in parents} sum_{v with last=k and shift-consistent} xi[t,u,v]
         shape = (self.K,) * self.R + (self.K,)
         counts = np.zeros(shape)
         for t in range(Teff - 1):
             Xi_t = xi[t]  # (S,S)
-            # 只考虑“合法迁移”：v 必须等于 next_ctx[u, k]
-            # 否则 A[u,v]=0，Xi_t[u,v] 也会接近 0
+            # Only consider "legal transitions": v must equal next_ctx[u, k]
+            # Otherwise A[u,v]=0 and Xi_t[u,v] is ~0
             for u in range(self.S):
                 parents = tuple(self.idx2ctx[u].tolist())
                 for k in range(self.K):
@@ -154,21 +155,21 @@ class SingleHOHMM:
                     if w > 0:
                         counts[parents + (k,)] += w
 
-        # 归一化得到 psi
+        # Normalize to obtain psi
         denom = counts.sum(axis=-1, keepdims=True) + 1e-12
         self.psi = counts / denom
 
-        # 用 psi 重建 A
+        # Rebuild A from psi
         self._build_A_from_psi()
 
-        # ===== 发射（GMM）更新 =====
-        # 对每个真实状态 k：权重 w_tk = sum_{contexts last=k} gamma[t, context]
+        # ===== Emissions (GMM) update =====
+        # For each true state k: w_tk = sum_{contexts with last=k} gamma[t, context]
         T = len(y)
-        # 聚合到真实时间轴 t = t0..T-1
+        # Aggregate back to real time axis t = t0..T-1
         w_tk = np.zeros((T, self.K))
         w_tk[t0:] = gamma @ self.mask_last.T  # (Teff,S) @ (S,K) -> (Teff,K)
 
-        # 统计充分量（每个状态 k，GMM EM 的一次迭代）
+        # Sufficient statistics for one EM iteration of GMM per state
         new_w = np.zeros((self.K, self.C))
         sum_y = np.zeros((self.K, self.C))
         sum_y2 = np.zeros((self.K, self.C))
@@ -195,15 +196,15 @@ class SingleHOHMM:
         self.mix_mu = sum_y / new_w
         self.mix_var= np.maximum(sum_y2 / new_w - self.mix_mu**2, 1e-6)
 
-    # ---------- 训练 ----------
+    # ---------- Training ----------
     def fit(self, y):
         """
-        y: (T,) 当前链的观测
+        y: (T,) observations of the current chain
         """
         y = np.asarray(y, dtype=float)
         T = len(y)
 
-        # 初始化 GMM
+        # Initialize GMM
         self.mix_w  = np.full((self.K, self.C), 1.0/self.C)
         self.mix_mu = np.zeros((self.K, self.C))
         self.mix_var= np.zeros((self.K, self.C))
@@ -220,7 +221,7 @@ class SingleHOHMM:
                 self.mix_mu[k, :]  = base + 0.1*np.std(y) * offsets
                 self.mix_var[k, :] = np.var(y)/(self.K*self.C) + 1e-2
 
-        # 初始化 psi（均匀），由此构造 A；pi 均匀
+        # Initialize psi (uniform), then build A; pi is uniform over expanded states
         self.psi = np.full((self.K,)*self.R + (self.K,), 1.0/self.K)
         self._build_A_from_psi()
         self.pi = np.full(self.S, 1.0/self.S)
@@ -239,7 +240,7 @@ class SingleHOHMM:
         y = np.asarray(y, dtype=float)
         T = len(y)
         if T < self.R:
-            # 退化：直接用 pi 的 MAP 上下文，重复最后一位
+            # Degenerate case: use MAP context from pi, then repeat its last element
             z = np.zeros(T, dtype=int)
             return z
 
@@ -264,24 +265,26 @@ class SingleHOHMM:
         for t in range(Teff-2, -1, -1):
             path[t] = psi_ptr[t+1, path[t+1]]
 
-        # 还原真实状态：取上下文最后一位
+        # Map back to true states: take the last element of the context
         z = np.zeros(T, dtype=int)
         for i, s in enumerate(path):
             z[t0 + i] = self.last_of_ctx[s]
-        # 前 t0 个（没有上下文）就用第一段的状态填充
+        # For the first t0 steps (no context), fill with the first available state
         z[:t0] = z[t0]
         return z
 
-    # ---------- 预测（一步） ----------
+    # ---------- Forecast (one-step or multi-step) ----------
     def forecast(self, y_hist, n_steps=1):
         """
-        y_hist: (L,) 历史窗口
-        返回：dict，含 obs_mean/obs_var (n_steps,1)、state_proba 等（对齐你原有接口）
+        y_hist: (L,) history window
+        Returns a dict aligned with your existing interface, containing:
+          - obs_mean/obs_var: (n_steps, 1)
+          - state_proba, map_state_joint, map_state_chains
         """
         y = np.asarray(y_hist, dtype=float)
         L = len(y)
         if L < self.R:
-            # 初始分布下的一步预测
+            # One-step forecast from initial distribution
             p = self.pi.copy()
         else:
             t0 = self.R - 1
@@ -296,7 +299,7 @@ class SingleHOHMM:
                 log_alpha[t] = logB[t] + logsumexp(la, axis=0)
             p = np.exp(log_alpha[-1] - logsumexp(log_alpha[-1]))  # (S,)
 
-        # 预计算混合后均值/方差（按真实状态）
+        # Precompute mixture-collapsed mean/var per true state
         mix_mean = np.sum(self.mix_w * self.mix_mu, axis=-1)  # (K,)
         mix_var  = np.sum(self.mix_w * (self.mix_var + (self.mix_mu - mix_mean[:, None])**2), axis=-1)  # (K,)
 
@@ -310,7 +313,7 @@ class SingleHOHMM:
             p = p / (p.sum() + 1e-12)
             state_proba[h] = p
             map_state[h] = np.argmax(p)
-            # 边缘到真实状态 k
+            # Marginalize to true states k
             pm_k = p @ self.mask_last.T  # (K,)
             pm_k = pm_k / (pm_k.sum() + 1e-12)
             m = np.sum(pm_k * mix_mean)
@@ -323,10 +326,10 @@ class SingleHOHMM:
             "obs_mean": obs_mean,   # (n_steps,1)
             "obs_var": obs_var,
             "map_state_joint": map_state,
-            "map_state_chains": [self.last_of_ctx[map_state]],  # 仅单链
+            "map_state_chains": [self.last_of_ctx[map_state]],  # single chain only
         }
 
-# =============== 多链独立 HOHMM（把每条链独立训练/推断） ===============
+# =============== Multiple independent HOHMMs (train/infer each chain independently) ===============
 class IndependentHOHMMs:
     def __init__(self, K=2, num_nodes=3, order=2, mix_components=3, max_iter=80, tol=1e-5, seed=0):
         self.M = int(num_nodes)
@@ -369,8 +372,8 @@ class IndependentHOHMMs:
             "map_state_chains": map_states,
         }
 
-# ===================== 下面是与你现有评估管线兼容的示例 =====================
-# ==== 配置 ====
+# ===================== Example compatible with your current evaluation pipeline =====================
+# ==== Config ====
 # env_name = 'sim_chosmm_5000_g2_2_0.2'
 # net = np.array([[0, 1, 0],
 #                 [1, 0, 1],
@@ -378,39 +381,39 @@ class IndependentHOHMMs:
 #
 # env_name = 'sim_chosmm_10_10000_g2_2_0.2'
 # net = np.load("G:/mypro/predict_and_states/data/sim_chosmm_W_10.npy")
-
+#
 # env_name = 'sim_chosmm_50_10000_g2_2_0.2'
 # net = np.load("G:/mypro/predict_and_states/data/sim_chosmm_W_50.npy")
 
-# env_name = 'HL2'
+# env_name = 'exchange'
 env_name = 'machine'
 directory = "./preTrained/{}".format(env_name)  # save trained models
-directory2 = "./results/{}".format(env_name)  # save results
+directory2 = "./results/{}".format(env_name)    # save results
 os.makedirs(directory, exist_ok=True)
 os.makedirs(directory2, exist_ok=True)
 
 filename = "HOHMM_" + env_name
 
-# ==== 读数据 ====
+# ==== Load data ====
 data, data_max, data_min, data_label = prepro(env_name, None)
 
 T = data.shape[0]
 
-# ==== 划分 ====
+# ==== Split ====
 train_end = int(0.8 * T)
 test_beg = train_end
 
-# ==== 训练 ====
+# ==== Training ====
 K = 2
 num_nodes = data.shape[1]
 model = IndependentHOHMMs(K=K, num_nodes=num_nodes, order=2, mix_components=3,
                           max_iter=120, tol=1e-5, seed=0)
 model.fit(data[:train_end])
 
-# 全序列 Viterbi
-z_hat_all = model.viterbi(data)   # list，长度 = num_nodes
+# Viterbi on full sequence
+z_hat_all = model.viterbi(data)   # list, length = num_nodes
 
-# ==== 评估与存储 ====
+# ==== Evaluation & saving ====
 START_AT = 1000
 colnames = []
 for n in range(num_nodes):
@@ -423,7 +426,7 @@ with tqdm(total=data.shape[0] - t) as pbar:
     while t < data.shape[0]:
         results = results._append({}, ignore_index=True)
 
-        # 固定窗口以提速（你原来的2000）
+        # Fixed window for speed
         fc = model.forecast(data[max(t - 2000, 0):t], n_steps=1)
         pred_means = fc["obs_mean"][0]
 

@@ -7,7 +7,7 @@ from DATAPREPRO import prepro
 from tqdm import tqdm
 
 
-# ---------- 工具函数 ----------
+# ---------- Utility functions ----------
 def logsumexp(a, axis=None):
     a_max = np.max(a, axis=axis, keepdims=True)
     out = a_max + np.log(np.sum(np.exp(a - a_max), axis=axis, keepdims=True))
@@ -42,12 +42,12 @@ class IndependentHMMs:
         self.mix_mu = [None]*self.M        # list of (K,C)
         self.mix_var= [None]*self.M        # list of (K,C)
 
-    # ---------- emissions (GMM) ----------
+    # ---------- Emissions (GMM) ----------
     def _state_loglik_chain(self, y, m):
         """
         For chain m:
           y: (T,) observations
-        returns:
+        Returns:
           logB: (T, K) where logB[t,k] = log p(y_t | z_t=k)
         """
         K, C = self.K, self.C
@@ -65,7 +65,7 @@ class IndependentHMMs:
         logB = logsumexp(np.log(w[None, :, :]+eps) + lN, axis=2)  # sum over components
         return logB
 
-    # ---------- forward-backward per chain ----------
+    # ---------- Forward-backward per chain ----------
     def _forward_backward_chain(self, y, m):
         """
         Returns gamma (T,K), xi (T-1,K,K), loglik for chain m
@@ -102,7 +102,7 @@ class IndependentHMMs:
 
         return gamma, xi, loglik
 
-    # ---------- M step per chain ----------
+    # ---------- M-step per chain ----------
     def _m_step_chain(self, y, gamma, xi, m):
         K, C = self.K, self.C
         T = y.shape[0]
@@ -145,7 +145,7 @@ class IndependentHMMs:
         self.mix_mu[m]  = sum_y / new_w
         self.mix_var[m] = np.maximum(sum_y2 / new_w - self.mix_mu[m]**2, 1e-6)
 
-    # ---------- fit all chains ----------
+    # ---------- Fit all chains ----------
     def fit(self, Y):
         """
         Y: (T, M) numpy array
@@ -153,7 +153,7 @@ class IndependentHMMs:
         Y = np.asarray(Y, dtype=float)
         T, M, K, C = Y.shape[0], self.M, self.K, self.C
 
-        # init per-chain params
+        # Initialize per-chain params
         for m in range(M):
             self.pi[m] = np.full(K, 1.0/K)
             A = self.rng.random((K, K))
@@ -197,7 +197,7 @@ class IndependentHMMs:
             prev_ll = ll_total
         return self
 
-    # ---------- viterbi per chain ----------
+    # ---------- Viterbi per chain ----------
     def viterbi(self, Y):
         Y = np.asarray(Y, dtype=float)
         T, M, K = Y.shape[0], self.M, self.K
@@ -224,15 +224,15 @@ class IndependentHMMs:
             paths.append(path)
         return paths  # list of length M, each (T,)
 
-    # ---------- forecast n_steps per chain ----------
+    # ---------- Forecast n_steps per chain ----------
     def forecast(self, Y_hist, n_steps=1):
         """
-        Y_hist: (T_hist, M)  —— 仅用于得到每条链的滤波分布 alpha_T
-        返回:
-          state_proba: None (独立链不返回联合分布)
+        Y_hist: (T_hist, M) — used only to obtain the filtered distribution (alpha_T) for each chain.
+        Returns:
+          state_proba: None (independent chains do not return a joint distribution)
           obs_mean:    (n_steps, M)
           obs_var:     (n_steps, M)
-          map_state_chains: list长度M，每条链MAP状态（每步）
+          map_state_chains: list of length M, MAP state per step for each chain
         """
         Y_hist = np.asarray(Y_hist, dtype=float)
         T, M, K, C = Y_hist.shape[0], self.M, self.K, self.C
@@ -241,13 +241,13 @@ class IndependentHMMs:
         obs_var  = np.zeros((n_steps, M))
         map_state_chains = [np.zeros(n_steps, dtype=int) for _ in range(M)]
 
-        # 组件混合后的 state-level 发射均值/方差
+        # Mixture-collapsed state-level emission mean/var
         mix_mean = [np.sum(self.mix_w[m]*self.mix_mu[m], axis=1) for m in range(M)]  # (K,)
         mix_var  = [np.sum(self.mix_w[m]*(self.mix_var[m] + (self.mix_mu[m]-mix_mean[m][:,None])**2), axis=1)
                     for m in range(M)]  # (K,)
 
         for m in range(M):
-            # filter to get alpha_T on chain m
+            # Filter to get alpha_T on chain m
             y = Y_hist[:, m]
             logB = self._state_loglik_chain(y, m)    # (T,K)
             logA = np.log(self.A[m] + 1e-12)
@@ -262,11 +262,11 @@ class IndependentHMMs:
 
             p = alpha_T.copy()
             for h in range(n_steps):
-                p = p @ self.A[m]                 # next-step state dist
+                p = p @ self.A[m]                 # next-step state distribution
                 p = p / (p.sum() + 1e-12)
                 map_state_chains[m][h] = np.argmax(p)
 
-                # mixture over states -> obs mean/var
+                # Mixture over states -> observation mean/var
                 mean_m = np.sum(p * mix_mean[m])
                 exp_var = np.sum(p * mix_var[m])
                 var_mean = np.sum(p * (mix_mean[m] - mean_m)**2)
@@ -281,10 +281,9 @@ class IndependentHMMs:
         }
 
 
+# ------------------ Example: synthetic/real data + training + forecasting ------------------
 
-# ------------------ 示例：合成数据 + 训练 + 预测 ------------------
-
-# ==== 配置 ====
+# ==== Config ====
 # env_name = 'sim_chosmm_5000_g2_2_0.2'
 # net = np.array([[0, 1, 0],
 #                 [1, 0, 1],
@@ -296,35 +295,35 @@ class IndependentHMMs:
 # env_name = 'sim_chosmm_50_10000_g2_2_0.2'
 # net = np.load("G:/mypro/predict_and_states/data/sim_chosmm_W_50.npy")
 
-# env_name = 'HL2'
+# env_name = 'exchange'
 env_name = 'machine'
 
-directory = "./preTrained/{}".format(env_name)  # save trained models
-directory2 = "./results/{}".format(env_name)  # save results
+directory = "./preTrained/{}".format(env_name)  # directory to save trained models
+directory2 = "./results/{}".format(env_name)    # directory to save results
 os.makedirs(directory, exist_ok=True)
 os.makedirs(directory2, exist_ok=True)
 
 filename = "HMM_" + env_name
 
-# ==== 读数据 ====
+# ==== Load data ====
 data, data_max, data_min, data_label = prepro(env_name, None)
 
 T = data.shape[0]
 
-# ==== 划分 ====
+# ==== Train/test split ====
 train_end = int(0.8 * T)
 test_beg = train_end
 
-# ==== 训练 ====
+# ==== Training ====
 K = 2
 num_nodes = data.shape[1]
 model = IndependentHMMs(K=K, num_nodes=num_nodes, mix_components=3, max_iter=120, tol=1e-5, seed=0)
 model.fit(data[:train_end])
 
-# 全序列 Viterbi
-z_hat_all = model.viterbi(data)   # list，长度 = num_nodes
+# Viterbi for the full sequence
+z_hat_all = model.viterbi(data)   # list of length = num_nodes
 
-# ==== 评估与存储 ====
+# ==== Evaluation & saving ====
 START_AT = 1000
 colnames = []
 for n in range(num_nodes):
@@ -337,7 +336,7 @@ with tqdm(total=data.shape[0] - t) as pbar:
     while t < data.shape[0]:
         results = results._append({}, ignore_index=True)
 
-        # 固定窗口以提速（你原来的2000）
+        # Fixed-size context window for speed
         fc = model.forecast(data[max(t - 2000, 0):t], n_steps=1)
         pred_means = fc["obs_mean"][0]
 
@@ -383,9 +382,11 @@ for n in range(num_nodes):
     row_obs = row_group * 2
     row_state = row_group * 2 + 1
 
+    # Upper: label & state; Lower: target & prediction (kept original plotting order)
     axes[row_obs, col].plot(results[[f"label{n}", f"state{n}"]])
     axes[row_state, col].plot(results[[f"target{n}", f"pred{n}"]])
 
+# Remove unused subplots if num_nodes is not a multiple of max_cols
 for j in range(num_nodes, num_rows * max_cols):
     col = j % max_cols
     row_group = j // max_cols

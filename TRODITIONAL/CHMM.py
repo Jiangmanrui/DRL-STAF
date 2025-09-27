@@ -8,7 +8,7 @@ from DATAPREPRO import prepro
 from tqdm import tqdm
 
 
-# ---------- 工具函数 ----------
+# ---------- Utility functions ----------
 def logsumexp(a, axis=None):
     a_max = np.max(a, axis=axis, keepdims=True)
     out = a_max + np.log(np.sum(np.exp(a - a_max), axis=axis, keepdims=True))
@@ -23,10 +23,11 @@ def gaussian_logpdf(x, mu, var):
 
 class CoupledHMM3:
     """
-    3条时间序列的 Coupled Hidden Markov Model:
-    - 每条链有 K 个隐状态，总联合状态数 S = K^3
-    - 发射：GMM（每链每状态 C 个高斯分量；C=1 时退化为单高斯）
-    - 转移：联合状态之间的全矩阵 A (S x S)，可选 net 投影结构
+    Coupled Hidden Markov Model for M time series (default example: M=3):
+
+    - Each chain has K hidden states; total joint state count S = K^M.
+    - Emissions: GMM (for each chain and each state, C Gaussian components; when C=1, it reduces to a single Gaussian).
+    - Transitions: a full S x S joint transition matrix A, with an optional "net" projection structure.
     """
 
     def __init__(self, K=3, num_nodes=3, max_iter=50, tol=1e-4, seed=0, net=None,
@@ -34,8 +35,8 @@ class CoupledHMM3:
         self.net = net
         self.parents = None
         self.K = K
-        self.M = int(num_nodes)  # NEW: 链条数
-        self.S = K ** self.M  # CHANGED: 用 M
+        self.M = int(num_nodes)  # number of chains
+        self.S = K ** self.M     # total joint states
         self.max_iter = max_iter
         self.tol = tol
         self.rng = np.random.default_rng(seed)
@@ -44,11 +45,11 @@ class CoupledHMM3:
         self.pi = None
         self.A = None
 
-        # 保留但不用于发射（统一用 M）
-        self.mu = None  # (M,K)
-        self.var = None  # (M,K)
+        # Keep placeholders (not used for emissions directly; we use GMM below)
+        self.mu = None   # (M, K)
+        self.var = None  # (M, K)
 
-        # GMM 参数（统一用 M）
+        # GMM parameters (used for emissions)
         self.C = int(mix_components)
         self.mix_w = None  # (M, K, C)
         self.mix_mu = None  # (M, K, C)
@@ -62,12 +63,12 @@ class CoupledHMM3:
         # idx -> (z1,...,zM)
         self.idx2tuple = np.array(np.unravel_index(np.arange(self.S), shape)).T  # (S, M
 
-    # ---------- 概率计算 ----------
+    # ---------- Probabilities ----------
     def _emission_loglik_t(self, y_t):
         S, K, C, M = self.S, self.K, self.C, self.M
         eps = 1e-8
 
-        # (M,K): 每链每状态的 loglik（GMM 的 logsumexp）
+        # (M,K): per-chain per-state log-likelihood (logsumexp over GMM components)
         chain_state_loglik = np.zeros((M, K))
         for m in range(M):
             for k in range(K):
@@ -79,7 +80,7 @@ class CoupledHMM3:
         ll = np.zeros(S)
         for s in range(S):
             z = self.idx2tuple[s]  # (M,)
-            # sum over chains
+            # sum across chains
             ll[s] = np.sum([chain_state_loglik[m, z[m]] for m in range(M)])
         return ll
 
@@ -91,6 +92,7 @@ class CoupledHMM3:
         for t in range(T):
             logB[t] = self._emission_loglik_t(Y[t])
 
+        # Forward
         log_alpha = np.zeros((T, S))
         log_alpha[0] = np.log(self.pi + 1e-12) + logB[0]
         for t in range(1, T):
@@ -99,15 +101,18 @@ class CoupledHMM3:
 
         loglik = logsumexp(log_alpha[-1], axis=0)
 
+        # Backward
         log_beta = np.zeros((T, S))
         for t in range(T - 2, -1, -1):
             lb = np.log(self.A + 1e-12) + (logB[t + 1] + log_beta[t + 1])[None, :]
             log_beta[t] = logsumexp(lb, axis=1)
 
+        # Gamma
         log_gamma = log_alpha + log_beta
         log_gamma = log_gamma - logsumexp(log_gamma, axis=1)[:, None]
         gamma = np.exp(log_gamma)
 
+        # Xi
         xi = np.zeros((T - 1, S, S))
         for t in range(T - 1):
             m = (log_alpha[t][:, None]
@@ -118,16 +123,16 @@ class CoupledHMM3:
 
         return gamma, xi, loglik
 
-    # ---------- M 步：参数更新 ----------
+    # ---------- M-step: parameter updates ----------
     def _m_step(self, Y, gamma, xi):
         T = Y.shape[0]
         S, K, C = self.S, self.K, self.C
         eps = 1e-8
 
-        # 初始分布
+        # Initial distribution
         self.pi = gamma[0] / (np.sum(gamma[0]) + 1e-12)
 
-        # 转移矩阵（带轻微平滑）
+        # Transition matrix (with slight smoothing)
         A_num = np.sum(xi, axis=0)  # (S,S)
         A_num += 1e-2
         if self.net is None:
@@ -136,15 +141,15 @@ class CoupledHMM3:
         else:
             self._project_A_with_net(A_num)
 
-        # ===== 发射（GMM）更新 =====
-        # 1) 边缘权重
+        # ===== Emissions (GMM) updates =====
+        # 1) Marginal weights w_mk_t
         w_mk_t = np.zeros((self.M, K, T))
         for m in range(self.M):
             for k in range(K):
                 mask_s = (self.idx2tuple[:, m] == k)
                 w_mk_t[m, k] = np.sum(gamma[:, mask_s], axis=1)
 
-        # 2) 责任累积
+        # 2) Accumulate responsibilities
         new_w = np.zeros((self.M, K, C))
         sum_y = np.zeros((self.M, K, C))
         sum_y2 = np.zeros((self.M, K, C))
@@ -166,14 +171,14 @@ class CoupledHMM3:
                 sum_y2[m, k] += (r_tc * (y[:, None] ** 2)).sum(axis=0)
                 new_w[m, k] = np.maximum(new_w[m, k], eps)
 
-        # 3) 更新
+        # 3) Update parameters
         self.mix_w = new_w / (new_w.sum(axis=-1, keepdims=True) + eps)
         self.mix_mu = sum_y / new_w
         self.mix_var = np.maximum(sum_y2 / new_w - self.mix_mu ** 2, 1e-6)
 
-    # ---------- 训练 ----------
+    # ---------- Training ----------
     def fit(self, Y):
-        # parents 列表
+        # Build parent lists from net (if provided)
         if self.net is not None:
             self.parents = [list(np.where(self.net[:, m] == 1)[0]) for m in range(self.M)]
         else:
@@ -183,16 +188,17 @@ class CoupledHMM3:
         T = Y.shape[0]
         S, K, C, M = self.S, self.K, self.C, self.M
 
+        # Initialize parameters
         self.pi = np.full(S, 1.0 / S)
         A = self.rng.random((S, S))
         A = A / (A.sum(axis=1, keepdims=True) + 1e-12)
         self.A = 0.9 * A + 0.1 * (1.0 / S)
 
-        # 占位（不用于发射）
+        # Placeholders (not used directly for emissions)
         self.mu = np.zeros((M, K))
         self.var = np.zeros((M, K))
 
-        # GMM 初始化 (M,K,C)
+        # Initialize GMM parameters (M,K,C)
         self.mix_w = np.full((M, K, C), 1.0 / C)
         self.mix_mu = np.zeros((M, K, C))
         self.mix_var = np.zeros((M, K, C))
@@ -210,6 +216,7 @@ class CoupledHMM3:
                     self.mix_mu[m, k, :] = base + 0.1 * np.std(Y[:, m]) * offsets
                     self.mix_var[m, k, :] = (np.var(Y[:, m]) / (K * C)) + 1e-2
 
+        # EM loop
         prev_ll = -np.inf
         for it in range(self.max_iter):
             gamma, xi, ll = self._forward_backward(Y)
@@ -220,6 +227,10 @@ class CoupledHMM3:
         return self
 
     def _project_A_with_net(self, A_num):
+        """
+        Project the joint transition counts to a factored form guided by the dependency graph `net`.
+        Optionally add `base_prior` pseudo-counts based on local (marginal) transitions.
+        """
         K, S, M = self.K, self.S, self.M
         counts = []
         for m in range(M):
@@ -229,6 +240,7 @@ class CoupledHMM3:
 
         base_counts = [np.zeros((K, K)) for _ in range(M)]
 
+        # Accumulate counts conditioned on parent configurations
         for s in range(S):
             z = self.idx2tuple[s]  # (M,)
             par_vals = [tuple(z[j] for j in self.parents[m]) for m in range(M)]
@@ -245,7 +257,7 @@ class CoupledHMM3:
                     counts[m][key] += w
                     base_counts[m][z[m], z2[m]] += w
 
-        # base_prior（若>0）作为“本地转移”伪计数
+        # Add base_prior as pseudo-counts for local transitions if > 0
         if self.base_prior > 0.0:
             for m in range(M):
                 row_sum = base_counts[m].sum(axis=1, keepdims=True) + 1e-12
@@ -256,8 +268,10 @@ class CoupledHMM3:
                     for parent_idx in np.ndindex(counts[m].shape[:-2]):
                         counts[m][parent_idx] += self.base_prior * base_prior_prob
 
+        # Normalize to get conditional transition probabilities per chain
         thetas = [c / (c.sum(axis=-1, keepdims=True) + 1e-12) for c in counts]
 
+        # Reconstruct the joint transition matrix A from factored conditionals
         A_new = np.zeros((S, S))
         for s in range(S):
             z = self.idx2tuple[s]
@@ -273,7 +287,7 @@ class CoupledHMM3:
         A_new = A_new / (A_new.sum(axis=1, keepdims=True) + 1e-12)
         self.A = A_new
 
-    # ---------- Viterbi 解码 ----------
+    # ---------- Viterbi decoding ----------
     def viterbi(self, Y):
         Y = np.asarray(Y, dtype=float)
         T, S, M = Y.shape[0], self.S, self.M
@@ -297,10 +311,10 @@ class CoupledHMM3:
             path_joint[t] = psi[t + 1, path_joint[t + 1]]
 
         z = self.idx2tuple[path_joint]  # (T,M)
-        # 返回 list: 长度 M，每个元素 shape=(T,)
+        # Return a list of length M, each element has shape (T,)
         return [z[:, m] for m in range(self.M)]
 
-    # ---------- 预测 ----------
+    # ---------- Forecasting ----------
     def forecast(self, Y, n_steps=1):
         Y = np.asarray(Y, dtype=float)
         T, S, K, C, M = Y.shape[0], self.S, self.K, self.C, self.M
@@ -309,6 +323,7 @@ class CoupledHMM3:
         for t in range(T):
             logB_T[t] = self._emission_loglik_t(Y[t])
 
+        # Filtered alpha at time T
         log_alpha = np.zeros((T, S))
         log_alpha[0] = np.log(self.pi + 1e-12) + logB_T[0]
         for t in range(1, T):
@@ -321,7 +336,7 @@ class CoupledHMM3:
         obs_var = np.zeros((n_steps, M))
         map_state = np.zeros(n_steps, dtype=int)
 
-        # 预计算混合后的均值/方差: (M,K)
+        # Precompute mixture mean/var per (m,k): shape (M,K)
         mix_mean = np.sum(self.mix_w * self.mix_mu, axis=-1)
         mix_var = np.sum(self.mix_w * (self.mix_var + (self.mix_mu - mix_mean[..., None]) ** 2), axis=-1)
 
@@ -332,6 +347,7 @@ class CoupledHMM3:
             state_proba[h] = p
             map_state[h] = np.argmax(p)
 
+            # Chain-wise predictive mean/var by marginalizing joint p over each chain's K states
             for m in range(M):
                 pm = np.zeros(K)
                 for k in range(K):
@@ -346,7 +362,7 @@ class CoupledHMM3:
                 obs_var[h, m] = exp_var + var_mean
 
         map_tuple = self.idx2tuple[map_state]  # (n_steps,M)
-        # 为了与之前一致，返回 map_state_chains 仍给三元组风格的解包：改为 list
+        # Keep compatibility with earlier return format: list for per-chain MAP states
         return {
             "state_proba": state_proba,
             "obs_mean": obs_mean,
@@ -356,9 +372,9 @@ class CoupledHMM3:
         }
 
 
-# ------------------ 示例：合成数据 + 训练 + 预测 ------------------
+# ------------------ Example: synthetic/real data + training + forecasting ------------------
 
-# ==== 配置 ====
+# ==== Config ====
 # env_name = 'sim_chosmm_5000_g2_2_0.2'
 # net = np.array([[0, 1, 0],
 #                 [1, 0, 1],
@@ -370,36 +386,36 @@ class CoupledHMM3:
 # env_name = 'sim_chosmm_50_10000_g2_2_0.2'
 # net = np.load("G:/mypro/predict_and_states/data/sim_chosmm_W_50.npy")
 
-# env_name = 'HL2'
+# env_name = 'exchange'
 env_name = 'machine'
 net = None
 
-directory = "./preTrained/{}".format(env_name)  # save trained models
-directory2 = "./results/{}".format(env_name)  # save results
+directory = "./preTrained/{}".format(env_name)   # directory for saving trained models
+directory2 = "./results/{}".format(env_name)     # directory for saving results
 os.makedirs(directory, exist_ok=True)
 os.makedirs(directory2, exist_ok=True)
 
 filename = "CHMM_" + env_name
 
-# ==== 读数据 ====
+# ==== Load data ====
 data, data_max, data_min, data_label = prepro(env_name, None)
 
 T = data.shape[0]
 
-# ==== 划分 ====
+# ==== Train/test split ====
 train_end = int(0.8 * T)
 test_beg = train_end
 
-# ==== 训练 ====
+# ==== Training ====
 K = 2
 num_nodes = data.shape[1]
 model = CoupledHMM3(K=K, num_nodes=num_nodes, max_iter=120, tol=1e-5, seed=0, net=net, mix_components=3,base_prior=30)  # C=2 可调
 model.fit(data[:train_end])
 
-# 全序列 Viterbi
-z_hat_all = model.viterbi(data)   # list，长度 = num_nodes
+# Viterbi on the full sequence
+z_hat_all = model.viterbi(data)   # list of length = num_nodes
 
-# ==== 评估与存储 ====
+# ==== Evaluation & saving ====
 START_AT = 1000
 colnames = []
 for n in range(num_nodes):
@@ -412,7 +428,7 @@ with tqdm(total=data.shape[0] - t) as pbar:
     while t < data.shape[0]:
         results = results._append({}, ignore_index=True)
 
-        # 固定窗口以提速（你原来的2000）
+        # Fixed-size context window for speed
         fc = model.forecast(data[max(t - 2000, 0):t], n_steps=1)
         pred_means = fc["obs_mean"][0]
 

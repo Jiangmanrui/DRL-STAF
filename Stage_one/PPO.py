@@ -11,9 +11,7 @@ temperature = 0.5
 class PolicyNet(torch.nn.Module):
     def __init__(self, state_dim, hidden_dim, history_dim, action_dim):
         super(PolicyNet, self).__init__()
-        # print(state_dim, hidden_dim, action_dim)
-        nhead = 4
-        num_layers = 1
+        # s1_dim corresponds to state["S11"] shape: (time_window, feature_dim)
         s1_dim = state_dim["S11"]
         self.num_nodes = s1_dim[0]
         self.dense1 = nn.Linear(s1_dim[0] * s1_dim[1], hidden_dim, bias=False)
@@ -21,6 +19,7 @@ class PolicyNet(torch.nn.Module):
         self.dense42 = nn.Linear(history_dim * action_dim, hidden_dim, bias=False)
         self.node_heads = nn.Linear(hidden_dim * 3, action_dim, bias=False)
 
+        # kept (unused in forward as in original code)
         kernel_size = 2
         self.conv = nn.Conv1d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=kernel_size)
 
@@ -39,8 +38,6 @@ class PolicyNet(torch.nn.Module):
 class ValueNet(torch.nn.Module):
     def __init__(self, state_dim, hidden_dim, history_dim, action_dim):
         super(ValueNet, self).__init__()
-        nhead = 4
-        num_layers = 1
         s1_dim = state_dim["S11"]
         self.num_nodes = s1_dim[0]
         self.dense1 = nn.Linear(s1_dim[0] * s1_dim[1], hidden_dim, bias=False)
@@ -62,7 +59,6 @@ class ValueNet(torch.nn.Module):
 
 
 class PPO:
-    ''' PPO算法,采用截断方式 '''
 
     def __init__(self, state_dim, hidden_dim, history_dim, action_dim, actor_lr, critic_lr,
                  lmbda, epochs, eps, gamma, device):
@@ -74,8 +70,8 @@ class PPO:
                                                  lr=critic_lr)
         self.gamma = gamma
         self.lmbda = lmbda
-        self.epochs = epochs  # 一条序列的数据用来训练轮数
-        self.eps = eps  # PPO中截断范围的参数
+        self.epochs = epochs       # number of epochs to reuse the collected trajectory
+        self.eps = eps             # PPO clipping range (epsilon)
         self.device = device
         self.entropy_coef = entropy_coef
 
@@ -119,7 +115,7 @@ class PPO:
         advantage = compute_advantage(self.gamma, self.lmbda,
                                       td_delta.cpu()).to(self.device)
         probs = self.actor(states)
-        assert actions.max() < probs.shape[1], f"动作索引超出范围，max:{actions.max()}, 动作维度:{probs.shape[1]}"
+        assert actions.max() < probs.shape[1], f"Action index out of range. max:{actions.max()}, action_dim:{probs.shape[1]}"
 
         old_log_probs = torch.log(probs.gather(1, actions)).detach()
 
@@ -130,7 +126,7 @@ class PPO:
             ratio = torch.exp(log_probs - old_log_probs)
             surr1 = ratio * advantage
             surr2 = torch.clamp(ratio, 1 - self.eps,
-                                1 + self.eps) * advantage  # 截断
+                                1 + self.eps) * advantage
             entropy = -torch.sum(probs_smoothed * torch.log(probs_smoothed + 1e-8), dim=1).mean()
             actor_loss = torch.mean(-torch.min(surr1, surr2)) - self.entropy_coef * entropy  # PPO损失函数
             critic_loss = torch.mean(F.mse_loss(self.critic(states), td_target.detach()))

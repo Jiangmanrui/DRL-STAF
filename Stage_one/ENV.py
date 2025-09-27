@@ -6,27 +6,45 @@ import math
 
 
 def inverse_softmax(arr, window, T=1.0):
+    """
+    Windowed inverse-softmax over a 1D array.
+    Larger window-sum ⇒ smaller probability (due to the negative sign).
+    """
     c = np.cumsum(np.r_[0, arr])
-    res = c[window:] - c[:-window]  # 长度 = len(arr) - window + 1
-    x = -res / T  # 核心：值越大，-x 越小，softmax 后概率越小
-    e_x = np.exp(x - np.max(x))  # 数值稳定性优化
+    res = c[window:] - c[:-window]  # length = len(arr) - window + 1
+    x = -res / T                   # key: larger value -> smaller prob after softmax
+    e_x = np.exp(x - np.max(x))    # numerical stability
     return e_x / e_x.sum()
 
 
 def inverse_softmax2(arr, T=1.0):
-    x = -arr / T  # 核心：值越大，-x 越小，softmax 后概率越小
-    e_x = np.exp(x - np.max(x))  # 数值稳定性优化
+    """
+    Pointwise inverse-softmax over a 1D array.
+    Larger value ⇒ smaller probability (due to the negative sign).
+    """
+    x = -arr / T
+    e_x = np.exp(x - np.max(x))    # numerical stability
     return e_x / e_x.sum()
 
 
-# 离散动作空间
+# Discrete-action environment
 class Env(gym.Env):
     """
-    自定义环境：时间序列预测
-    状态空间：包含两个部分
-        S1: 历史x天的时间序列（连续空间）
-        S2: 预测结果和真实结果（连续空间）
-    动作空间：智能体的预测结果（下一个时间步的预测值）
+    Custom environment for time-series forecasting.
+
+    Observation space has four parts:
+      S1: window of observations for prediction
+      S11: window of observations for state estimation
+      S3: previous-step state confidence
+      S4: previous-step per-state squared error
+
+    Action space:
+      Discrete hidden-state decision for the next step (argmax over state head).
+
+    Reward (high-level):
+      Encourages picking the state whose state-head prediction reduces squared error
+      relative to a base predictor, with a small penalty for too-frequent state
+      switching (encourage temporal consistency).
     """
 
     def __init__(self, time_series, target_time_series, window_size, train_size, val_size, hidden_dim, history_dim,
@@ -36,13 +54,12 @@ class Env(gym.Env):
 
         self.time_series = time_series
         self.target_time_series = target_time_series
-        self.max_steps = len(time_series)  # 最大步数等于时间序列的长度
+        self.max_steps = len(time_series)
         self.max_timesteps = max_timesteps
         self.window_size = window_size
         self.train_size = int(self.max_steps * train_size)
         self.val_size = self.train_size
-        # self.val_size2 = int(self.max_steps * val_size / 2)
-        # self.test_size = self.max_steps - self.train_size - self.val_size2
+
         self.qs = 200
         self.test_size = self.max_steps - self.qs
         self.hidden_dim = hidden_dim
@@ -74,11 +91,6 @@ class Env(gym.Env):
 
         self.action_space = spaces.Discrete(self.num_states)
 
-        # 定义状态空间
-        # S1: 当前及历史观测
-        # S2: 当前隐状态
-        # S3: 上一时刻置信
-        # S4: 上一时刻error
         self.observation_space = spaces.Dict({
             'S1': spaces.Box(low=-1, high=1, shape=(window_size[0], self.feature_num), dtype=np.float32),
             'S11': spaces.Box(low=-1, high=1, shape=(window_size[1], self.feature_num), dtype=np.float32),
@@ -86,7 +98,8 @@ class Env(gym.Env):
             'S4': spaces.Box(low=-1, high=1, shape=(self.num_states,), dtype=np.float32),
         })
 
-        self.current_step = window_size  # 初始化当前步（确保有足够的历史数据生成状态）
+        # Start step (ensures enough history to form the first observation)
+        self.current_step = window_size
 
     def reset(self, type, prednet):
         self.actionhz = []
@@ -98,16 +111,12 @@ class Env(gym.Env):
         self.msetongjihz = 0
         self.type = type
         if type == 0:
-            # print(len(range(np.max(self.window_size) + 1, self.train_size - self.max_timesteps)))
-            # print(len(self.sort_p))
-            # self.current_step = 10
+            # Sample a starting step within the train region using sort_p
             self.current_step = np.random.choice(
                 range(np.max(self.window_size) + 1, self.train_size - self.max_timesteps), size=1, replace=True,
-                p=self.sort_p)[0]  # 随机从某一步开始
+                p=self.sort_p)[0]
             self.current_start = self.current_step
-            # print("current_step", self.current_step,self.window_size + 1,self.train_size - self.max_timesteps)
             self.max_steps = self.current_step + self.max_timesteps
-            # self.current_step = self.window_size
             self.choice = np.zeros((1, self.num_states), dtype=np.float32)
             self.choice[0][np.random.choice(range(self.num_states))] = 1
             self.con_actions = 1
@@ -115,7 +124,7 @@ class Env(gym.Env):
             self.current_step = np.max(self.window_size) + 1
             self.max_steps = self.train_size
         else:
-            # self.current_step = self.train_size + self.val_size2
+            # test
             self.current_step = self.qs
             print(self.current_step)
             self.max_steps = len(self.time_series)
@@ -131,10 +140,9 @@ class Env(gym.Env):
         predbase = prednet.predictbase(self.state_pred)
         self.errorbase = (predbase - self.state_pred['target']) ** 2
         error_k = (pred_k - self.state_pred['target']) ** 2
-        # print(error_k)
+
         self.s4 = np.vstack((self.s4, error_k.reshape((1, self.num_states))))
         self.s4 = np.delete(self.s4, 0, axis=0)
-        # print(self.s4)
 
         self.history = {"h1": list(np.zeros(1)), "h5": list(np.zeros(5)), "h10": list(np.zeros(10))}
         return self._get_observation()
@@ -164,7 +172,6 @@ class Env(gym.Env):
                 if self.con_actions < self.con_actions_theta:
                     reward2 = -self.con_theta * (self.con_actions_theta - self.con_actions) / (
                             self.con_actions_theta - 1)
-                    # reward2 = -0.1
                 self.con_actions = 1
 
         actiong = np.zeros((1, self.num_states), dtype=np.float32)
@@ -184,9 +191,11 @@ class Env(gym.Env):
         self.predbase = predbase
         target = self.target_time_series[self.current_step].reshape((1, -1))
 
-        # 更新下一个时刻的预测训练
+        # Build next-step prediction state (shift target)
         self.state_pred = {k: state[k] for k in ['S1']}
         self.state_pred['target'] = target
+
+        # Squared errors
         error_k = (pred_k - target) ** 2
         errorbase = (predbase - target) ** 2
         reward = self.score1bs * (
