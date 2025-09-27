@@ -83,7 +83,7 @@ def train():
     val_ep_reward = -999
     val_changecount = 0
 
-    data, targetdata, data_max, data_min, data_label = prepro2(env_name, train_size, nn)
+    data, targetdata, data_max, data_min, data_label = prepro(env_name, train_size, nn)
 
     try:
         feature_num = data.shape[1]

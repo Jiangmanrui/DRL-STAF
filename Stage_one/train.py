@@ -34,7 +34,7 @@ tau = 0.01
 num_states = 2
 nn = 0
 
-# env_name = 'sim_chosmm_5000_g2_2_0.2'
+env_name = 'sim_chosmm_5000_g2_2_0.2'
 # env_name = 'sim_chosmm_10_10000_g2_2_0.2'
 # env_name = 'sim_chosmm_50_10000_g2_2_0.2'
 
@@ -85,7 +85,7 @@ def train():
     val_ep_reward = -999
     val_changecount = 0
 
-    data, targetdata, data_max, data_min, data_label = prepro2(env_name, train_size, nn)
+    data, targetdata, data_max, data_min, data_label = prepro(env_name, train_size, nn)
 
     try:
         feature_num = data.shape[1]

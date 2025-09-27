@@ -6,7 +6,7 @@ import torch
 torch.manual_seed(0)
 from PPO_2 import PPO as PPO_2
 from PPO_1 import PPO as PPO_1
-from PREDMhl import PREDM
+from PREDMexchange import PREDM
 import os
 import pandas as pd
 from ENV_base import Env as Env_base
