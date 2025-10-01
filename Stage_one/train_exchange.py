@@ -110,7 +110,7 @@ def train():
     state_dim = {
         'S1': env.observation_space['S1'].shape,
         'S11': env.observation_space['S11'].shape,
-        'S3': env.observation_space['S3'].shape
+        'S3': env.observation_space['S3'].shape,
         'S4': env.observation_space['S4'].shape,
     }
     action_dim = num_states
