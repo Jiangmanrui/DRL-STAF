@@ -34,8 +34,9 @@ class Env(gym.Env):
         self.window_size = window_size
         self.train_size = int(self.max_steps * train_size)
         self.val_size = self.train_size
-        self.qs = 200
-        self.test_size = self.max_steps - self.qs
+
+        self.qs = np.max(self.window_size) + 1
+
         self.hidden_dim = hidden_dim
         self.history_dim = history_dim
         self.num_states = num_states
@@ -93,7 +94,11 @@ class Env(gym.Env):
         elif type == 1:
             self.max_steps = self.train_size
         else:
+            self.current_step = self.qs
+            # print(self.current_step)
             self.max_steps = len(self.time_series)
+            # print(self.max_steps)
+            self.test_size = self.max_steps - self.qs
             self.choice = np.zeros((1, self.num_states), dtype=np.float32)
             self.choice[0][np.random.choice(range(self.num_states))] = 1
         self.last_action = -9999

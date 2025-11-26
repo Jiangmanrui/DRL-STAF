@@ -60,8 +60,8 @@ class Env(gym.Env):
         self.train_size = int(self.max_steps * train_size)
         self.val_size = self.train_size
 
-        self.qs = 200
-        self.test_size = self.max_steps - self.qs
+        self.qs = np.max(self.window_size) + 1
+
         self.hidden_dim = hidden_dim
         self.history_dim = history_dim
         self.num_states = num_states
@@ -129,6 +129,7 @@ class Env(gym.Env):
             print(self.current_step)
             self.max_steps = len(self.time_series)
             print(self.max_steps)
+            self.test_size = self.max_steps - self.qs
             self.choice = np.zeros((1, self.num_states), dtype=np.float32)
             self.choice[0][np.random.choice(range(self.num_states))] = 1
         self.last_action = -9999
@@ -240,10 +241,8 @@ class Env(gym.Env):
             def safe_average(arr, default=0.0):
                 return np.average(arr) if arr.size > 0 else default
 
-            if len(np.unique(is_one_states)) == 1:
-                print("prefer one state")
             if len(np.unique(self.actionhz)) > 1:
-                tongji = np.array([len(self.actionhz[self.actionhz == a]) for a in np.unique(self.actionhz)]) / len(
+                tongji = np.array([len(self.actionhz[self.actionhz == a]) for a in range(self.num_states)]) / len(
                     self.actionhz)
                 print(tongji)
 

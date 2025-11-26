@@ -1,9 +1,5 @@
 import copy
-
-random_seed = 0
 import torch
-
-torch.manual_seed(0)
 from PPO_2 import PPO as PPO_2
 from PPO_1 import PPO as PPO_1
 from PREDM import PREDM
@@ -15,6 +11,20 @@ from tqdm import tqdm
 import numpy as np
 from DATAPREPRO import prepro
 import matplotlib.pyplot as plt
+import random
+
+random_seed = 0
+
+def set_seed(seed):
+    print(f"[INFO] Set all seeds to {seed}")
+    # Python 内置
+    random.seed(seed)
+    # NumPy
+    np.random.seed(seed)
+    # PyTorch CPU/GPU
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -77,7 +87,7 @@ def train():
     actor_lr = 1e-4
     critic_lr = 1e-4
     pred_lr = 1e-4
-    max_episodes = 10000
+    max_episodes = 5000
     gamma = 0.99
     lmbda = 0.95
     loops = 10

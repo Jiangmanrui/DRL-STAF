@@ -26,8 +26,8 @@ class Env(gym.Env):
         self.train_size = int(self.max_steps * train_size)
         self.val_size = self.train_size
 
-        self.qs = 200
-        self.test_size = self.max_steps - self.qs
+        self.qs = np.max(self.window_size) + 1
+
         self.hidden_dim = hidden_dim
         self.history_dim = history_dim
         self.num_states = num_states
@@ -83,6 +83,7 @@ class Env(gym.Env):
         else:
             self.current_step = self.qs
             self.max_steps = len(self.time_series)
+            self.test_size = self.max_steps - self.qs
 
     def step(self, sort_p):
         self.current_step += 1

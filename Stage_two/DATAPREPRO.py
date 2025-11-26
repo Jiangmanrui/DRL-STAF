@@ -3,10 +3,11 @@ import numpy as np
 
 
 def prepro(env_name, train_s):
-    if env_name in ["sim_chosmm_5000_g2_2_0.2", "sim_chosmm_50_10000_g2_2_0.2", "sim_chosmm_10_10000_g2_2_0.2"]:
+    if env_name in ["sim_chosmm_5000_g2_2_0.2", "sim_chosmm_50_10000_g2_2_0.2", "sim_chosmm_10_10000_g2_2_0.2",
+                    "sim_chosmm_3_5000_g2_2_0.2_SO_1","sim_chosmm_3_5000_g2_2_0.2_SO_2"]:
         data = np.load("../data/" + env_name + ".pkl", allow_pickle=True)
         label = data[1]
-        data = data[0]
+        data = data[0].reshape(len(label), -1)
         targetdata = data
     elif env_name in ["exchange"]:
         HLlist = ["USD_CNY", "USD_EUR", "USD_JPY"]
@@ -39,7 +40,7 @@ def prepro(env_name, train_s):
         label = np.zeros_like(data)
         for i in range(data.shape[1]):
             label[:, i] = np.array(data_all.loc[:, "label"])
-    if env_name not in ["HL2"]:
+    if env_name not in ["exchange"]:
         max = np.max(data, axis=0)
         min = np.min(data, axis=0)
         datag = (data - min) / (max - min)

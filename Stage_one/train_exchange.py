@@ -1,9 +1,5 @@
 import copy
-
-random_seed = 0
 import torch
-
-torch.manual_seed(0)
 from PPO import PPO
 from PREDMexchange import PREDM
 import os
@@ -13,6 +9,20 @@ from tqdm import tqdm
 import numpy as np
 from DATAPREPRO import prepro
 import matplotlib.pyplot as plt
+import random
+
+random_seed = 0
+
+def set_seed(seed):
+    print(f"[INFO] Set all seeds to {seed}")
+    # Python 内置
+    random.seed(seed)
+    # NumPy
+    np.random.seed(seed)
+    # PyTorch CPU/GPU
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -43,30 +53,32 @@ if not os.path.exists(directory):
     os.makedirs(directory)
 if not os.path.exists(directory2):
     os.makedirs(directory2)
-filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}".format(max_timesteps,
-                                                                 nn,
-                                                                 future_weight,
-                                                                 num_states,
-                                                                 score1bs,
-                                                                 score2bs,
-                                                                 con_actions_theta,
-                                                                 con_theta,
-                                                                 chajubs,
-                                                                 window_size,
-                                                                 history_dim,
-                                                                 hidden_dim,
-                                                                 param,
-                                                                 tau,
-                                                                 env_name)
-print("filename", filename)
 
 
-def train():
+
+def train(no=str(random_seed)):
+    filename = no+"_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}".format(max_timesteps,
+                                                                     nn,
+                                                                     future_weight,
+                                                                     num_states,
+                                                                     score1bs,
+                                                                     score2bs,
+                                                                     con_actions_theta,
+                                                                     con_theta,
+                                                                     chajubs,
+                                                                     window_size,
+                                                                     history_dim,
+                                                                     hidden_dim,
+                                                                     param,
+                                                                     tau,
+                                                                     env_name)
+    print("filename", filename)
+
     actor_lr = 1e-4
     critic_lr = 1e-4
     pred_lr = 1e-4
 
-    max_episodes = 9000
+    max_episodes = 5000
     gamma = 0.99
     lmbda = 0.95
     loops = 10
@@ -171,13 +183,15 @@ def train():
                 if done or env.current_step >= env.max_steps:
                     break
 
-
         prednet.updatebase(transition_dict)
-        prednet.use_target_pred = True
-        prednet.update2(transition_dict, env.chazhihz, env.choicehz, env.errorhz)
+        if episode < 5:
+            prednet.update(transition_dict, env.choicehz)
+            episode += 1
+            continue
+        else:
+            prednet.use_target_pred = True
+            prednet.update2(transition_dict, env.chazhihz, env.choicehz, env.errorhz)
 
-        if episode % 1000 == 0:
-            policy.entropy_coef = np.max([policy.entropy_coef - 0.005, 0.01])
         actor_loss, critic_loss = policy.update(transition_dict)
 
         actor_loss_ave.append(actor_loss)
@@ -224,7 +238,7 @@ def train():
                                                                                          ave_actor_loss_ave,
                                                                                          val_ep_reward))
 
-            if episode > 2000:
+            if episode > 1000:
                 print(ave_moving_ave, max_val_reward)
                 if np.average(change_countshz) <= max_timesteps / num_states * 0.6:
                     if ave_moving_ave > max_val_reward:
@@ -332,4 +346,5 @@ def train():
     log_f.close()
 
 if __name__ == '__main__':
+    set_seed(random_seed)
     train()

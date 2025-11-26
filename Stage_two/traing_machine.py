@@ -1,9 +1,5 @@
 import copy
-
-random_seed = 0
 import torch
-
-torch.manual_seed(0)
 from PPO_2 import PPO as PPO_2
 from PPO_1 import PPO as PPO_1
 from PREDM import PREDM
@@ -15,6 +11,20 @@ from tqdm import tqdm
 import numpy as np
 from DATAPREPRO import prepro
 import matplotlib.pyplot as plt
+import random
+
+random_seed = 0
+
+def set_seed(seed):
+    print(f"[INFO] Set all seeds to {seed}")
+    # Python 内置
+    random.seed(seed)
+    # NumPy
+    np.random.seed(seed)
+    # PyTorch CPU/GPU
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -69,7 +79,7 @@ def train():
     actor_lr = 1e-4
     critic_lr = 1e-4
     pred_lr = 1e-4
-    max_episodes = 10000
+    max_episodes = 5000
     gamma = 0.99
     lmbda = 0.95
     loops = 10
@@ -332,7 +342,7 @@ def train():
                 if done or env.current_step >= env.max_steps:
                     break
 
-        if episode > 2000:
+        if episode > 1000:
             # Restart the training of the prediction module
             for nn in range(num_nodes):
                 if train_sig[nn] != 0:
@@ -344,7 +354,7 @@ def train():
                         prednet[nn].updatebase(transition_dict2[nn])
                         prednet[nn].update2(transition_dict2[nn], env_real[nn].chazhihz, env_real[nn].choicehz)
 
-        if episode % 1000 == 0:
+        if episode % 500 == 0:
             policy.entropy_coef = np.max([policy.entropy_coef - 0.005, 0.01])
         actor_loss, critic_loss = policy.update(transition_dict)
         actor_loss_ave.append(actor_loss)
@@ -457,7 +467,7 @@ def train():
                                                                                          [val_ep_reward,
                                                                                           val_ep_reward_base]))
 
-            if episode > 2000:
+            if episode > 1000:
                 print(ave_moving_ave, max_val_reward)
                 if np.all(np.average(change_countshz, axis=0) <= max_timesteps / num_states * 0.6):
                     if ave_moving_ave > max_val_reward:
