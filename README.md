@@ -1,6 +1,6 @@
 # DRL-STAF
 
-This repository contains the code and data for **"DRL-STAF: A Deep Reinforcement Learning Framework for State-aware Forecasting of Complex Multivariate Hidden Markov Process"**.
+This repository contains the code and data for **"DRL-STAF: A Deep Reinforcement Learning Framework for State-Aware Forecasting of Complex Multivariate Hidden Markov Processes"**.
 
 ## Repository Structure
 
